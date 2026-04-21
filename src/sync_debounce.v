@@ -2,19 +2,18 @@
 
 module sync_debounce #(
     // Với Clock 50MHz (chu kỳ 20ns), 20ms = 1_000_000 chu kỳ.
-    // Dùng parameter để dễ dàng thu nhỏ giá trị đếm khi chạy mô phỏng (Testbench).
     parameter DELAY_CYCLES = 20'd1_000_000 
 )(
     input wire clk,
-    input wire reset_n,      // Tích cực mức thấp (Active-low)
-    input wire btn_in,       // Tín hiệu thô từ nút nhấn (Active-low)
+    input wire reset_n,      // Active-low
+    input wire btn_in,       // Active-low
     
     output reg btn_out,      // Tín hiệu nút nhấn đã được đồng bộ và lọc nhiễu
-    output wire falling_edge // Xung đơn 1 chu kỳ khi phát hiện sườn xuống (rất hữu ích cho WDI kick)
+    output wire falling_edge // Xung đơn 1 chu kỳ khi phát hiện sườn xuống cho WDI kick
 );
 
     //---------------------------------------------------------
-    // 1. Khối đồng bộ 2 tầng (2-FF Synchronizer)
+    // 2-FF Synchronizer
     //---------------------------------------------------------
     reg sync1, sync2;
     always @(posedge clk or negedge reset_n) begin
@@ -28,7 +27,7 @@ module sync_debounce #(
     end
 
     //---------------------------------------------------------
-    // 2. Khối đếm thời gian lọc nhiễu (Debouncer)
+    // Debouncer
     //---------------------------------------------------------
     reg [19:0] cnt;
 
@@ -54,7 +53,7 @@ module sync_debounce #(
     end
 
     //---------------------------------------------------------
-    // 3. Khối phát hiện sườn xuống (Falling Edge Detector)
+    // Falling Edge Detector
     //---------------------------------------------------------
     reg btn_out_prev;
     always @(posedge clk or negedge reset_n) begin
@@ -65,7 +64,6 @@ module sync_debounce #(
         end
     end
     
-    // Tạo xung kích mức 1 khi trạng thái trước là 1 và trạng thái nay là 0
     assign falling_edge = (btn_out_prev == 1'b1) && (btn_out == 1'b0);
 
 endmodule
