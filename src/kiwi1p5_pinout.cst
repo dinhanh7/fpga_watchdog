@@ -1,0 +1,11 @@
+// Button test debounce
+IO_LOC "wdi" 35;
+IO_PORT "wdi" PULL_MODE=UP;
+
+// LED test debounce
+IO_LOC "wdo" 27;
+IO_PORT "wdo" PULL_MODE=NONE DRIVE=8;
+
+// Clock
+IO_LOC "clk" 4
+IO_PORT "clk" PULL_MODE=UP;
