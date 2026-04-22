@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Module name="top_watchdog" Register="9" Alu="7" Lut="5" T_Register="422(9)" T_Alu="15(7)" T_Lut="707(5)">
+ <SubModule name="u_debounce_wdi" Register="24" Lut="39" T_Register="24(24)" T_Lut="39(39)"/>
+ <SubModule name="u_debounce_en" Register="23" Lut="39" T_Register="23(23)" T_Lut="39(39)"/>
+ <SubModule name="u_rx" Register="32" Lut="58" T_Register="32(32)" T_Lut="58(58)"/>
+ <SubModule name="u_tx" Register="23" Lut="31" T_Register="23(23)" T_Lut="31(31)"/>
+ <SubModule name="u_parser" Register="138" Alu="8" Lut="142" T_Register="138(138)" T_Alu="8(8)" T_Lut="142(142)"/>
+ <SubModule name="u_regfile" Register="115" Lut="68" T_Register="115(115)" T_Lut="68(68)"/>
+ <SubModule name="u_watchdog" Register="58" Lut="325" T_Register="58(58)" T_Lut="325(325)"/>
+</Module>
