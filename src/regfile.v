@@ -57,13 +57,13 @@ module regfile (
     always @(posedge clk) begin
         case (i_addr)
             // Doc CTRL: clr_fault luon doc la 0 (chuan Write-to-clear)
-            8'h00: o_rd_data = {29'd0, 1'b0, o_wdi_src, o_wd_en}; 
-            8'h04: o_rd_data = o_twd_ms;
-            8'h08: o_rd_data = o_trst_ms;
-            8'h0C: o_rd_data = {16'd0, o_arm_delay_us};
-            8'h10: o_rd_data = {27'd0, i_last_kick_src, i_wdo_state, 
+            8'h00: o_rd_data <= {29'd0, 1'b0, o_wdi_src, o_wd_en}; 
+            8'h04: o_rd_data <= o_twd_ms;
+            8'h08: o_rd_data <= o_trst_ms;
+            8'h0C: o_rd_data <= {16'd0, o_arm_delay_us};
+            8'h10: o_rd_data <= {27'd0, i_last_kick_src, i_wdo_state, 
                                 i_enout_state, i_fault_active, i_en_effective};
-            default: o_rd_data = 32'hDEADBEEF; // Bao hieu dia chi sai
+            default: o_rd_data <= 32'hDEADBEEF; // Bao hieu dia chi sai
         endcase
     end
 endmodule
