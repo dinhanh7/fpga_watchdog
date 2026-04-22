@@ -5,7 +5,7 @@ module sync_debounce #(
     parameter DELAY_CYCLES = 20'd1_000_000 
 )(
     input wire clk,
-    input wire reset_n,      // Active-low
+    input wire rst_n,      // Active-low
     input wire btn_in,       // Active-low
     
     output reg btn_out,      // Tín hiệu nút nhấn đã được đồng bộ và lọc nhiễu
@@ -16,8 +16,8 @@ module sync_debounce #(
     // 2-FF Synchronizer
     //---------------------------------------------------------
     reg sync1, sync2;
-    always @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
             // Nút nhấn có pull-up, mặc định không bấm là mức 1
             {sync2, sync1} <= 2'b11; 
         end else begin
@@ -31,8 +31,8 @@ module sync_debounce #(
     //---------------------------------------------------------
     reg [19:0] cnt;
 
-    always @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
             cnt <= 20'd0;
             btn_out <= 1'b1; // Mặc định chưa bấm
         end else begin
@@ -56,8 +56,8 @@ module sync_debounce #(
     // Falling Edge Detector
     //---------------------------------------------------------
     reg btn_out_prev;
-    always @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
             btn_out_prev <= 1'b1;
         end else begin
             btn_out_prev <= btn_out;
