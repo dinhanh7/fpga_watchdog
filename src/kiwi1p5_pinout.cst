@@ -1,26 +1,39 @@
-// Clock
-IO_LOC "clk" 4
+// =============================================================================
+// Constraints File: kiwi1p5_pinout.cst
+// Description: I/O Pin mappings for the Kiwi 1P5 Board (Watchdog System)
+// =============================================================================
+
+// Clock 27MHz
+IO_LOC "clk" 4;
 IO_PORT "clk" PULL_MODE=UP;
 
-// S1 button (WDI)
-IO_LOC "wdi" 35;
-IO_PORT "wdi" PULL_MODE=UP;
+// =========================================================
+// HARDWARE BUTTONS
+// =========================================================
+// S1: WDI Kick (active-low, pull-up on board)
+IO_LOC "wdi_pin" 35;
+IO_PORT "wdi_pin" PULL_MODE=UP;
 
-// LED D3 (WDO)
-IO_LOC "wdo" 27;
-IO_PORT "wdo" PULL_MODE=NONE DRIVE=8;
+// S2: Enable Watchdog (active-low, pull-up on board)
+IO_LOC "en_hw_pin" 36;
+IO_PORT "en_hw_pin" PULL_MODE=UP;
 
-// 
-IO_LOC "en" 36;
-IO_PORT "en" PULL_MODE=UP;
+// =========================================================
+// UART INTERFACE
+// =========================================================
+IO_LOC "uart_rx_pin" 33;
+IO_PORT "uart_rx_pin" PULL_MODE=UP;
 
-// LED D4 (ENOUT)
-IO_LOC "enout" 28;
-IO_PORT "enout" DRIVE=8;
+IO_LOC "uart_tx_pin" 34;
+IO_PORT "uart_tx_pin" DRIVE=8;
 
-// UART
-IO_LOC "uart_rx" 34;
-IO_PORT "uart_rx" PULL_MODE=UP;
+// =========================================================
+// PHYSICAL OUTPUTS
+// =========================================================
+// WDO: Fault Indicator LED (1=OK, 0=Fault)
+IO_LOC "wdo_pin" 27;
+IO_PORT "wdo_pin" PULL_MODE=NONE DRIVE=8;
 
-IO_LOC "uart_tx" 33;
-IO_PORT "uart_tx" DRIVE=8;
+// ENOUT: Activity Indicator LED (1=Active, 0=Disabled)
+IO_LOC "enout_pin" 28;
+IO_PORT "enout_pin" PULL_MODE=NONE DRIVE=8;

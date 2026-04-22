@@ -2,87 +2,92 @@
 
 // =============================================================================
 // Module: watchdog_core
-// Mô tả: Trái tim FSM + Timers của hệ thống Watchdog Monitor.
-//         Mô phỏng hành vi IC TPS3431 trên FPGA.
+// Description: Core FSM and Timers for the Watchdog Monitor System.
+//              Simulates the behavior of the TPS3431 Watchdog IC on an FPGA.
 //
-// FSM gồm 4 trạng thái:
-//   DISABLE  -> EN=0: WDO=1 (OK), ENOUT=0, mọi kick bị bỏ qua.
-//   ARMING   -> EN vừa lên 1: đếm arm_delay_us, kick vẫn bị bỏ qua.
-//   MONITOR  -> Giám sát bình thường: đếm tWD_ms, kick hợp lệ reset timer.
-//   FAULT    -> Timeout xảy ra: WDO=0 (lỗi), đếm tRST_ms rồi tự nhả.
-//              CLR_FAULT có thể nhả WDO ngay lập tức.
+// FSM States:
+//   DISABLE  -> EN=0: WDO=1 (OK), ENOUT=0, all kicks ignored.
+//   ARMING   -> EN asserted: counts arm_delay_us, kicks ignored.
+//   MONITOR  -> Normal monitoring: counts tWD_ms, valid kicks reset timer.
+//   FAULT    -> Timeout occurred: WDO=0 (Fault), counts tRST_ms then recovers.
+//              CLR_FAULT pulse can assert recovery immediately.
 //
-// Nguồn EN:  en_hw (nút S2 phần cứng) OR en_sw (bit CTRL[0] từ UART)
-// Nguồn WDI: Phụ thuộc bit wdi_src (CTRL[1]):
-//             wdi_src=0 -> Chỉ nhận kick từ S1 (phần cứng)
-//             wdi_src=1 -> Chỉ nhận kick từ UART (phần mềm)
+// EN Source:  en_hw (Hardware S2 button) OR en_sw (UART CTRL[0] bit)
+// WDI Source: Depends on wdi_src (CTRL[1] bit):
+//             wdi_src=0 -> Accepts kicks from S1 (Hardware) only.
+//             wdi_src=1 -> Accepts kicks from UART (Software) only.
 // =============================================================================
 
 module watchdog_core #(
-    parameter CLK_FREQ = 50_000_000  // Tần số xung nhịp hệ thống (Hz)
+    parameter CLK_FREQ = 50_000_000  // System clock frequency (Hz)
 )(
     input  wire        clk,
-    input  wire        reset_n,
+    input  wire        rst_n,
 
-    // -------------------------------------------------------
-    // Tín hiệu phần cứng (từ sync_debounce, đã active-high)
-    // -------------------------------------------------------
-    input  wire        en_hw,           // EN từ nút S2 (1 = bật, 0 = tắt)
-    input  wire        wdi_falling_hw,  // Xung cạnh xuống WDI từ S1 (1 chu kỳ)
+    // =========================================================
+    // HARDWARE INPUTS (From sync_debounce, active-high)
+    // =========================================================
+    input  wire        en_hw_i,         // EN from S2 button (1 = Enabled)
+    input  wire        wdi_falling_hw_i,// WDI kick pulse from S1 (1-cycle pulse)
 
-    // -------------------------------------------------------
-    // Tín hiệu phần mềm (từ uart_frame_parser)
-    // -------------------------------------------------------
-    input  wire        uart_kick_pulse, // Xung kick WDI từ lệnh UART CMD 0x03
+    // =========================================================
+    // SOFTWARE INPUTS (From uart_frame_parser)
+    // =========================================================
+    input  wire        uart_kick_pulse_i, // WDI kick pulse from UART CMD 0x03
 
-    // -------------------------------------------------------
-    // Cấu hình từ regfile
-    // -------------------------------------------------------
-    input  wire        en_sw,           // Software Enable (CTRL bit 0)
-    input  wire        wdi_src,         // Nguồn WDI: 0=HW only, 1=SW only
-    input  wire        clr_fault,       // Xung xóa lỗi (CTRL bit 2, W1C)
-    input  wire [31:0] tWD_ms,          // Thời gian timeout Watchdog (ms)
-    input  wire [31:0] tRST_ms,         // Thời gian giữ lỗi WDO (ms)
-    input  wire [15:0] arm_delay_us,    // Thời gian chờ khởi động (us)
+    // =========================================================
+    // CONFIGURATION (From regfile)
+    // =========================================================
+    input  wire        en_sw_i,         // Software Enable (CTRL bit 0)
+    input  wire        wdi_src_i,       // WDI Source: 0=HW only, 1=SW only
+    input  wire        clr_fault_i,     // Clear Fault pulse (W1C from CTRL bit 2)
+    input  wire [31:0] tWD_ms_i,        // Watchdog timeout duration (ms)
+    input  wire [31:0] tRST_ms_i,       // WDO fault holding duration (ms)
+    input  wire [15:0] arm_delay_us_i,  // Initial arming delay (us)
 
-    // -------------------------------------------------------
-    // Trạng thái xuất ra regfile (STATUS register)
-    // -------------------------------------------------------
-    output wire        en_effective,    // Watchdog đã qua giai đoạn Arming
-    output wire        fault_active,    // Đang ở trạng thái Fault
-    output wire        enout_state,     // Giá trị chân ENOUT hiện tại
-    output wire        wdo_state,       // Giá trị chân WDO hiện tại
-    output reg         last_kick_src,   // Nguồn kick cuối: 0=HW/S1, 1=SW/UART
+    // =========================================================
+    // STATUS TO REGFILE
+    // =========================================================
+    output wire        en_effective_o,  // Watchdog passed Arming phase
+    output wire        fault_active_o,  // Watchdog is in Fault state
+    output wire        enout_state_o,   // Current value of ENOUT pin
+    output wire        wdo_state_o,     // Current value of WDO pin
+    output reg         last_kick_src_o, // Source of last kick: 0=HW/S1, 1=SW/UART
 
-    // -------------------------------------------------------
-    // Ngõ ra vật lý tới chân FPGA
-    // -------------------------------------------------------
-    output reg         wdo_pin,         // WDO: 1=OK (Hi-Z), 0=Fault (kéo thấp)
-    output reg         enout_pin        // ENOUT: 1=Hệ thống hoạt động, 0=Vô hiệu
+    // =========================================================
+    // PHYSICAL OUTPUTS
+    // =========================================================
+    output reg         wdo_pin_o,       // WDO: 1=OK (Hi-Z), 0=Fault (pulled low)
+    output reg         enout_pin_o      // ENOUT: 1=System active, 0=Disabled
 );
 
-    // =========================================================================
-    // KHAI BÁO TRẠNG THÁI FSM
-    // =========================================================================
-    localparam S_DISABLE = 2'd0;  // Watchdog tắt
-    localparam S_ARMING  = 2'd1;  // Đang chờ khởi động (arm_delay)
-    localparam S_MONITOR = 2'd2;  // Giám sát bình thường (đếm tWD)
-    localparam S_FAULT   = 2'd3;  // Phát hiện lỗi (WDO kéo thấp, đếm tRST)
+    // =========================================================
+    // FSM STATES
+    // =========================================================
+    localparam S_DISABLE = 2'd0;  // Watchdog disabled
+    localparam S_ARMING  = 2'd1;  // Waiting for arming delay
+    localparam S_MONITOR = 2'd2;  // Normal monitoring (counting tWD)
+    localparam S_FAULT   = 2'd3;  // Fault detected (counting tRST)
 
     reg [1:0] state;
 
-    // =========================================================================
-    // BỘ TẠO XUNG 1 MICROSECOND (us_tick)
-    // =========================================================================
-    // Chia xung nhịp hệ thống xuống tạo 1 xung mỗi 1us.
-    // Ví dụ: CLK_FREQ = 50MHz -> US_DIV = 50 chu kỳ/us.
+    // Reset signal for Prescalers
+    reg reset_prescalers;
+
+    // =========================================================
+    // 1 MICROSECOND TICK GENERATOR (us_tick)
+    // =========================================================
+    // Divides system clock to generate a 1-cycle pulse every 1us.
     localparam US_DIV = CLK_FREQ / 1_000_000;
 
-    reg [7:0] us_cnt;   // 8-bit đủ cho US_DIV tối đa 255 (hỗ trợ đến 255MHz)
+    reg [7:0] us_cnt;   // 8-bit allows up to 255MHz system clock
     reg       us_tick;
 
-    always @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            us_cnt  <= 8'd0;
+            us_tick <= 1'b0;
+        end else if (reset_prescalers) begin
             us_cnt  <= 8'd0;
             us_tick <= 1'b0;
         end else begin
@@ -90,155 +95,170 @@ module watchdog_core #(
                 us_cnt  <= 8'd0;
                 us_tick <= 1'b1;
             end else begin
-                us_cnt  <= us_cnt + 1'b1;
+                us_cnt  <= us_cnt + 8'd1;
                 us_tick <= 1'b0;
             end
         end
     end
 
-    // =========================================================================
-    // BỘ TẠO XUNG 1 MILLISECOND (ms_tick)
-    // =========================================================================
-    // Đếm 1000 xung us_tick để tạo ra 1 xung mỗi 1ms.
-    reg [9:0] ms_sub_cnt;  // 10-bit đếm từ 0 đến 999
+    // =========================================================
+    // 1 MILLISECOND TICK GENERATOR (ms_tick)
+    // =========================================================
+    // Counts 1000 us_tick pulses to generate a 1-cycle pulse every 1ms.
+    reg [9:0] ms_sub_cnt;  // 10-bit counter (0 to 999)
     reg       ms_tick;
 
-    always @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            ms_sub_cnt <= 10'd0;
+            ms_tick    <= 1'b0;
+        end else if (reset_prescalers) begin
             ms_sub_cnt <= 10'd0;
             ms_tick    <= 1'b0;
         end else begin
-            ms_tick <= 1'b0;  // Mặc định hạ xung
+            ms_tick <= 1'b0;  // Default down
             if (us_tick) begin
                 if (ms_sub_cnt == 10'd999) begin
                     ms_sub_cnt <= 10'd0;
                     ms_tick    <= 1'b1;
                 end else begin
-                    ms_sub_cnt <= ms_sub_cnt + 1'b1;
+                    ms_sub_cnt <= ms_sub_cnt + 10'd1;
                 end
             end
         end
     end
 
-    // =========================================================================
-    // LOGIC KẾT HỢP TÍN HIỆU ENABLE & KICK
-    // =========================================================================
-    // EN kích hoạt từ phần cứng (S2) HOẶC phần mềm (CTRL bit 0)
-    wire en_combined = en_hw | en_sw;
+    // =========================================================
+    // ENABLE & KICK COMBINATORIAL LOGIC
+    // =========================================================
+    // Watchdog enabled either by Hardware (S2) OR Software (CTRL bit 0)
+    wire en_combined = en_hw_i | en_sw_i;
 
-    // Kick hợp lệ phụ thuộc vào bit wdi_src:
-    //   wdi_src = 0 -> Chỉ chấp nhận kick từ nút S1 (phần cứng)
-    //   wdi_src = 1 -> Chỉ chấp nhận kick từ UART (phần mềm)
-    wire kick_valid = (wdi_src == 1'b0) ? wdi_falling_hw : uart_kick_pulse;
+    // Valid kick depends on wdi_src configuration:
+    //   wdi_src = 0 -> Hardware S1 button only
+    //   wdi_src = 1 -> Software UART kick only
+    wire kick_valid = (wdi_src_i == 1'b0) ? wdi_falling_hw_i : uart_kick_pulse_i;
 
-    // =========================================================================
-    // BỘ ĐẾM TIMER ĐA NĂNG (dùng chung cho arm_delay, tWD, tRST)
-    // =========================================================================
+    // =========================================================
+    // MULTIPURPOSE TIMER COUNTER
+    // =========================================================
+    // Used to count arm_delay, tWD, and tRST respectively based on state.
     reg [31:0] timer_cnt;
 
-    // =========================================================================
-    // MÁY TRẠNG THÁI CHÍNH (FSM)
-    // =========================================================================
-    always @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
-            // Khởi động an toàn: Watchdog ở trạng thái vô hiệu hóa
-            state         <= S_DISABLE;
-            timer_cnt     <= 32'd0;
-            wdo_pin       <= 1'b1;   // WDO mặc định cao (không lỗi)
-            enout_pin     <= 1'b0;   // ENOUT mặc định thấp (chưa hoạt động)
-            last_kick_src <= 1'b0;
+    // =========================================================
+    // MAIN FSM LOGIC
+    // =========================================================
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            // Safe initialization: Watchdog is fully disabled
+            state            <= S_DISABLE;
+            timer_cnt        <= 32'd0;
+            wdo_pin_o        <= 1'b1;   // WDO default high (No Fault)
+            enout_pin_o      <= 1'b0;   // ENOUT default low (Disabled)
+            last_kick_src_o  <= 1'b0;
+            reset_prescalers <= 1'b0;
         end else begin
+            reset_prescalers <= 1'b0; // Default down
 
-            // =============================================================
-            // KIỂM TRA TOÀN CỤC: Nếu EN bị hạ xuống 0 ở BẤT KỲ lúc nào
-            //   -> Lập tức trở về trạng thái DISABLE
-            // Đây là hành vi ưu tiên cao nhất (override mọi state khác)
-            // =============================================================
+            // =========================================================
+            // GLOBAL OVERRIDE: If EN goes low at ANY time
+            //   -> Immediately return to DISABLE state.
+            // =========================================================
             if (!en_combined) begin
-                state     <= S_DISABLE;
-                timer_cnt <= 32'd0;
-                wdo_pin   <= 1'b1;   // Nhả WDO
-                enout_pin <= 1'b0;   // Tắt ENOUT
+                state            <= S_DISABLE;
+                timer_cnt        <= 32'd0;
+                wdo_pin_o        <= 1'b1;   // Release WDO fault
+                enout_pin_o      <= 1'b0;   // Turn off ENOUT
+                reset_prescalers <= 1'b1;   // Keep prescalers reset while disabled
             end else begin
-                // EN đang bật (en_combined = 1)
+                // EN is asserted (en_combined = 1)
                 case (state)
 
                     // -------------------------------------------------
-                    // DISABLE: Watchdog đang tắt, chờ EN lên 1
+                    // DISABLE: Watchdog is off, waiting for EN to go high.
                     // -------------------------------------------------
                     S_DISABLE: begin
-                        wdo_pin   <= 1'b1;
-                        enout_pin <= 1'b0;
-                        timer_cnt <= 32'd0;
-                        // EN vừa lên 1 (vì ta đã ở trong else của en_combined)
-                        // -> Chuyển sang ARMING
+                        wdo_pin_o        <= 1'b1;
+                        enout_pin_o      <= 1'b0;
+                        timer_cnt        <= 32'd0;
+                        reset_prescalers <= 1'b1;
+                        // Since we are in the `else` branch of `!en_combined`, 
+                        // EN is high -> transition to ARMING.
                         state <= S_ARMING;
                     end
 
                     // -------------------------------------------------
-                    // ARMING: Đếm arm_delay_us, phớt lờ mọi WDI kick
-                    // Sau khi hết arm_delay -> bật ENOUT, sang MONITOR
+                    // ARMING: Count arm_delay_us, ignore all WDI kicks.
+                    // After delay -> Enable ENOUT, transition to MONITOR.
                     // -------------------------------------------------
                     S_ARMING: begin
                         if (us_tick) begin
-                            if (timer_cnt >= {16'd0, arm_delay_us} - 1) begin
-                                // Hết thời gian chờ khởi động
-                                timer_cnt <= 32'd0;
-                                enout_pin <= 1'b1;   // Bật ENOUT báo hệ thống sẵn sàng
-                                state     <= S_MONITOR;
+                            // Use timer_cnt + 1 to prevent Underflow when arm_delay_us_i = 0
+                            if (timer_cnt + 32'd1 >= {16'd0, arm_delay_us_i}) begin
+                                // Arming delay finished
+                                timer_cnt        <= 32'd0;
+                                enout_pin_o      <= 1'b1;   // Assert ENOUT, system is ready
+                                reset_prescalers <= 1'b1;
+                                state            <= S_MONITOR;
                             end else begin
-                                timer_cnt <= timer_cnt + 1'b1;
+                                timer_cnt <= timer_cnt + 32'd1;
                             end
                         end
-                        // Mọi kick trong giai đoạn này đều bị bỏ qua (không xử lý)
+                        // All kicks ignored during Arming
                     end
 
                     // -------------------------------------------------
-                    // MONITOR: Giám sát bình thường
-                    //   - Kick hợp lệ -> reset timer về 0
-                    //   - Hết tWD_ms mà không có kick -> FAULT
+                    // MONITOR: Normal system monitoring.
+                    //   - Valid kick -> Reset timeout counter
+                    //   - tWD_ms expires without kick -> Transition to FAULT
                     // -------------------------------------------------
                     S_MONITOR: begin
                         if (kick_valid) begin
-                            // Nhận được kick hợp lệ -> Reset bộ đếm timeout
-                            timer_cnt     <= 32'd0;
-                            // Ghi nhận nguồn kick cuối cùng
-                            last_kick_src <= wdi_src;  // 0=HW, 1=SW
+                            // Valid kick received -> Reset timeout counter
+                            timer_cnt        <= 32'd0;
+                            reset_prescalers <= 1'b1; // Fix Prescaler Drift
+                            // Record the source of the successful kick
+                            last_kick_src_o  <= wdi_src_i;  // 0=HW, 1=SW
                         end else if (ms_tick) begin
-                            if (timer_cnt >= tWD_ms - 1) begin
-                                // TIMEOUT! Không nhận kick trong thời gian cho phép
-                                timer_cnt <= 32'd0;
-                                wdo_pin   <= 1'b0;   // Kéo WDO xuống thấp (báo lỗi)
-                                state     <= S_FAULT;
+                            // Use timer_cnt + 1 to prevent Underflow when tWD_ms_i = 0
+                            if (timer_cnt + 32'd1 >= tWD_ms_i) begin
+                                // TIMEOUT! No kick received within tWD
+                                timer_cnt        <= 32'd0;
+                                wdo_pin_o        <= 1'b0;   // Assert WDO low (Fault)
+                                reset_prescalers <= 1'b1;
+                                state            <= S_FAULT;
                             end else begin
-                                timer_cnt <= timer_cnt + 1'b1;
+                                timer_cnt <= timer_cnt + 32'd1;
                             end
                         end
                     end
 
                     // -------------------------------------------------
-                    // FAULT: WDO đang ở mức thấp (lỗi)
-                    //   - CLR_FAULT -> nhả WDO ngay lập tức
-                    //   - Hết tRST_ms -> tự động nhả WDO, quay về MONITOR
-                    //   - Mọi kick bị bỏ qua
+                    // FAULT: WDO is pulled low (Fault state).
+                    //   - CLR_FAULT -> Release WDO immediately
+                    //   - tRST_ms expires -> Release WDO automatically, return to MONITOR
+                    //   - Kicks are ignored
                     // -------------------------------------------------
                     S_FAULT: begin
-                        if (clr_fault) begin
-                            // Nhận lệnh xóa lỗi từ UART (ghi 1 vào CTRL bit 2)
-                            wdo_pin   <= 1'b1;   // Nhả WDO ngay
-                            timer_cnt <= 32'd0;
-                            state     <= S_MONITOR;
+                        if (clr_fault_i) begin
+                            // Received software clear fault command (CTRL bit 2)
+                            wdo_pin_o        <= 1'b1;   // Release WDO immediately
+                            timer_cnt        <= 32'd0;
+                            reset_prescalers <= 1'b1;
+                            state            <= S_MONITOR;
                         end else if (ms_tick) begin
-                            if (timer_cnt >= tRST_ms - 1) begin
-                                // Hết thời gian giữ lỗi tRST
-                                wdo_pin   <= 1'b1;   // Nhả WDO
-                                timer_cnt <= 32'd0;
-                                state     <= S_MONITOR;
+                            // Use timer_cnt + 1 to prevent Underflow when tRST_ms_i = 0
+                            if (timer_cnt + 32'd1 >= tRST_ms_i) begin
+                                // Reset delay duration tRST finished
+                                wdo_pin_o        <= 1'b1;   // Release WDO
+                                timer_cnt        <= 32'd0;
+                                reset_prescalers <= 1'b1;
+                                state            <= S_MONITOR;
                             end else begin
-                                timer_cnt <= timer_cnt + 1'b1;
+                                timer_cnt <= timer_cnt + 32'd1;
                             end
                         end
-                        // Kick bị bỏ qua hoàn toàn khi đang Fault
+                        // All kicks ignored during Fault
                     end
 
                     default: state <= S_DISABLE;
@@ -247,17 +267,17 @@ module watchdog_core #(
         end
     end
 
-    // =========================================================================
-    // GÁN TÍN HIỆU TRẠNG THÁI CHO REGFILE (STATUS REGISTER)
-    // =========================================================================
-    // en_effective = 1 khi Watchdog đã qua giai đoạn Arming (đang Monitor hoặc Fault)
-    assign en_effective = (state == S_MONITOR) || (state == S_FAULT);
+    // =========================================================
+    // STATUS SIGNAL ASSIGNMENTS FOR REGFILE
+    // =========================================================
+    // en_effective = 1 when Watchdog is actively monitoring or faulting
+    assign en_effective_o = (state == S_MONITOR) || (state == S_FAULT);
 
-    // fault_active = 1 khi đang ở trạng thái lỗi
-    assign fault_active = (state == S_FAULT);
+    // fault_active = 1 when currently in Fault state
+    assign fault_active_o = (state == S_FAULT);
 
-    // Trạng thái thực tế của các chân ngõ ra
-    assign enout_state = enout_pin;
-    assign wdo_state   = wdo_pin;
+    // Pass physical output pin states
+    assign enout_state_o = enout_pin_o;
+    assign wdo_state_o   = wdo_pin_o;
 
 endmodule
