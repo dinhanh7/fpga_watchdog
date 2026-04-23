@@ -71,7 +71,7 @@ module regfile (
     // =========================================================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // Reset to default TPS3431 parameters
+            // Reset to default parameters
             ctrl_reg      <= 32'd0;
             twd_reg       <= 32'd1600;  // Default tWD = 1600 ms
             trst_reg      <= 32'd200;   // Default tRST = 200 ms
