@@ -59,8 +59,8 @@ This system monitors a downstream processor or subsystem. If the monitored syste
                         ┌─────────────────────────────────────────────────┐
                         │              top_watchdog                       │
                         │                                                 │
-  S1 (WDI) ──►[sync_debounce]──► wdi_falling ──────────────┐             │
-  S2 (EN)  ──►[sync_debounce]──► en_hw ────────────────┐   │             │
+  S1 (WDI) ──►[sync_debounce]──► wdi_falling ───────────────┐             │
+  S2 (EN)  ──►[sync_debounce]──► en_hw ─────────────────┐   │             │
                         │                               │   │             │
   UART RX  ──►[uart_rx]──► rx_data/rx_done              │   │             │
                   │                                     │   │             │
@@ -73,11 +73,11 @@ This system monitors a downstream processor or subsystem. If the monitored syste
            [regfile]◄─────────┤          │          │   │   │             │
               │               │          │ watchdog │◄──┘   │             │
               │  config       │  status  │  _core   │◄──────┘             │
-              └───────────────┼──────────►│          │                    │
-                              │          └────┬─────┘                    │
-          [uart_tx]◄──────────┘               │                          │
-              │                               ├──► WDO LED (Pin 27)      │
-  UART TX ◄───┘                               └──► ENOUT LED (Pin 28)   │
+              └───────────────┼─────────►│          │                     │
+                              │          └────┬─────┘                     │
+          [uart_tx]◄──────────┘               │                           │
+              │                               ├──► WDO LED (Pin 27)       │
+  UART TX ◄───┘                               └──► ENOUT LED (Pin 28)     │
                         └─────────────────────────────────────────────────┘
 ```
 
@@ -170,8 +170,8 @@ Frames with incorrect checksums are **silently ignored**. No error response is s
 
 ```
                     EN=0 (from any state)
-          ┌────────────────────────────────────┐
-          ▼                                    │
+          ┌───────────────────────────────────┐
+          ▼                                   │
     ┌──────────┐     EN=1      ┌─────────┐    │
     │ DISABLE  │──────────────►│ ARMING  │    │
     │ WDO=1    │               │ WDO=1   │    │
@@ -184,11 +184,11 @@ Frames with incorrect checksums are **silently ignored**. No error response is s
                        │      │ WDO=1    │         │
                        │      │ ENOUT=1  │         │
                        │      └────┬─────┘         │
-                       │           │ tWD expires    │ tRST expires
-                       │           │ (no kick)      │ or CLR_FAULT
-                       │           ▼                │
-                       │      ┌──────────┐          │
-                       │      │  FAULT   │──────────┘
+                       │           │ tWD expires   │ tRST expires
+                       │           │ (no kick)     │ or CLR_FAULT
+                       │           ▼               │
+                       │      ┌──────────┐         │
+                       │      │  FAULT   │─────────┘
                        │      │ WDO=0    │
                        │      │ ENOUT=1  │
                        │      └──────────┘
