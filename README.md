@@ -55,29 +55,41 @@ This system monitors a downstream processor or subsystem. If the monitored syste
 
 ## Architecture
 
-```
+```text
                         ┌─────────────────────────────────────────────────┐
                         │              top_watchdog                       │
                         │                                                 │
-  S1 (WDI) ──►[sync_debounce]──► wdi_falling ───────────────┐             │
-  S2 (EN)  ──►[sync_debounce]──► en_hw ─────────────────┐   │             │
+              ┌─────────────┐                                             │
+  S1 (WDI) ──►│sync_debounce├──► wdi_falling ───────────────┐             │
+              └─────────────┘                               │             │
+              ┌─────────────┐                               │             │
+  S2 (EN)  ──►│sync_debounce├──► en_hw ─────────────────┐   │             │
+              └─────────────┘                           │   │             │
                         │                               │   │             │
-  UART RX  ──►[uart_rx]──► rx_data/rx_done              │   │             │
-                  │                                     │   │             │
-                  ▼                                     │   │             │
-          [uart_frame_parser]◄──── wdi_src ────┐        │   │             │
-              │       │       │                │        │   │             │
-         reg_we  reg_re  kick_pulse            │        │   │             │
-              │       │       │                │        │   │             │
-              ▼       ▼       │          ┌─────┴────┐   │   │             │
-           [regfile]◄─────────┤          │          │   │   │             │
-              │               │          │ watchdog │◄──┘   │             │
-              │  config       │  status  │  _core   │◄──────┘             │
-              └───────────────┼─────────►│          │                     │
-                              │          └────┬─────┘                     │
-          [uart_tx]◄──────────┘               │                           │
-              │                               ├──► WDO LED (Pin 27)       │
-  UART TX ◄───┘                               └──► ENOUT LED (Pin 28)     │
+              ┌─────────────┐                           │   │             │
+  UART RX  ──►│   uart_rx   ├──► rx_data/rx_done        │   │             │
+              └──────┬──────┘                           │   │             │
+                     │                                  │   │             │
+                     ▼                                  │   │             │
+          ┌───────────────────┐                         │   │             │
+          │ uart_frame_parser │◄──── wdi_src ────┐      │   │             │
+          └─┬───────┬───────┬─┘                  │      │   │             │
+            │       │       │                    │      │   │             │
+         reg_we  reg_re  kick_pulse              │      │   │             │
+            │       │       │                    │      │   │             │
+            ▼       ▼       │          ┌─────┴────┐     │   │             │
+          ┌───────────┐     │          │          │     │   │             │
+          │  regfile  │◄────┤          │ watchdog │◄────┘   │             │
+          │           │     │          │  _core   │◄────────┘             │
+          │  config   │   status       │          │                       │
+          └───┬───────┘     │          │          │                       │
+              └─────────────┼─────────►│          │                       │
+                            │          └────┬─────┘                       │
+          ┌───────────┐     │               │                             │
+          │  uart_tx  │◄────┘               ├──► WDO LED (Pin 27)         │
+          └─────┬─────┘                     └──► ENOUT LED (Pin 28)       │
+                │                                                         │
+  UART TX ◄─────┘                                                         │
                         └─────────────────────────────────────────────────┘
 ```
 
@@ -389,6 +401,18 @@ Verifies the `watchdog_core` FSM in isolation:
 - CLR_FAULT immediate recovery
 - Kick resetting the timeout counter
 
+### `tb/tb_uart_frame.v`
+Verifies the `uart_frame_parser` protocol logic:
+- Validates READ, WRITE, KICK, and STATUS command parsing
+- Tests checksum verification and corrupted frame rejection
+
+### `tb/tb_top_watchdog.v`
+Comprehensive automated integration testbench for the entire system:
+- Hardware vs Software enable and kick mechanisms
+- Timeout, FAULT, and Clear Fault sequences
+- Button debounce edge cases and noise rejection
+- UART configuration and corner cases
+
 ---
 
 ## Hardware Test Tool
@@ -446,7 +470,9 @@ watchdog_project/
 │   └── top_watchdog.sdc        # Timing constraints
 ├── tb/
 │   ├── tb_uart.v               # UART loopback testbench
-│   └── tb_watchdog_core.v      # Core FSM testbench
+│   ├── tb_uart_frame.v         # UART parser protocol testbench
+│   ├── tb_watchdog_core.v      # Core FSM testbench
+│   └── tb_top_watchdog.v       # Full system integration testbench
 ├── impl/                       # Gowin synthesis output
 ├── watchdog_hw_tester.py       # Python UART test suite
 └── watchdog_project.gprj       # Gowin project file
