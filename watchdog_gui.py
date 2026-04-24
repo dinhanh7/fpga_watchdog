@@ -57,6 +57,8 @@ class WatchdogGUI:
         self.ser = None
         self.polling = False
         self.kick_running = False
+        self._poll_pending = False
+        self._kick_pending = False
 
         # Single command queue — ALL serial I/O goes through one worker thread
         self._cmd_queue = queue.Queue()
@@ -89,6 +91,27 @@ class WatchdogGUI:
                 result = self._do_send(cmd, addr, data_bytes, expect_data)
                 if callback:
                     self.root.after(0, callback, result)
+            elif kind == "write_cfg":
+                twd, trst, arm = item[1:]
+                self._do_send(CMD_WRITE, REG_TWD_MS, list(struct.pack(">I", twd)), False)
+                time.sleep(0.05)
+                self._do_send(CMD_WRITE, REG_TRST_MS, list(struct.pack(">I", trst)), False)
+                time.sleep(0.05)
+                self._do_send(CMD_WRITE, REG_ARM_DELAY, list(struct.pack(">I", arm)), False)
+            elif kind == "read_cfg":
+                v1 = self._do_send(CMD_READ, REG_TWD_MS, [], True)
+                time.sleep(0.05)
+                v2 = self._do_send(CMD_READ, REG_TRST_MS, [], True)
+                time.sleep(0.05)
+                v3 = self._do_send(CMD_READ, REG_ARM_DELAY, [], True)
+                self.root.after(0, self._update_cfg_ui, v1, v2, v3)
+            elif kind == "read_regmap":
+                results = []
+                for addr, _ in self._regmap_rows:
+                    val = self._do_send(CMD_READ, addr, [], True)
+                    results.append(val)
+                    time.sleep(0.04)
+                self.root.after(0, self._update_reg_map_ui, results)
             # Small breathing gap between any two serial transactions
             time.sleep(0.008)
 
@@ -116,9 +139,9 @@ class WatchdogGUI:
 
     def _do_poll(self):
         """Read STATUS register silently (no TX/RX log spam)."""
-        if not self._check_conn():
-            return
         try:
+            if not self._check_conn():
+                return
             frame = build_frame(CMD_STATUS, 0x00)
             self.ser.reset_input_buffer()
             self.ser.write(frame)
@@ -128,12 +151,14 @@ class WatchdogGUI:
                 self.root.after(0, self._update_status_display, val)
         except:
             pass
+        finally:
+            self._poll_pending = False
 
     def _do_kick(self):
         """Send KICK command."""
-        if not self._check_conn():
-            return
         try:
+            if not self._check_conn():
+                return
             frame = build_frame(CMD_KICK, 0x00)
             self.ser.reset_input_buffer()
             self.ser.write(frame)
@@ -142,6 +167,8 @@ class WatchdogGUI:
             self.root.after(0, self._log, f"Kick {'OK' if ok else 'FAILED'}", "RX" if ok else "ERR")
         except:
             pass
+        finally:
+            self._kick_pending = False
 
     # ------------------------------------------------------------------ #
     #  PUBLIC API — queue commands, never block the GUI                    #
@@ -267,6 +294,45 @@ class WatchdogGUI:
         ttk.Button(reg_panel, text="Write All", command=self._write_config).pack(fill="x", pady=(10,3))
         ttk.Button(reg_panel, text="Read All", command=self._read_config).pack(fill="x", pady=3)
 
+        # === COLUMN 2: Register Map Viewer ===
+        regmap_panel = self._create_panel(col2, "REGISTER MAP VIEWER")
+
+        # Table header
+        hdr = tk.Frame(regmap_panel, bg="#273549")
+        hdr.pack(fill="x", pady=(0, 4))
+        for col_txt, col_w in [("Addr", 5), ("Name", 14), ("Value (dec)", 10), ("Raw (hex)", 10)]:
+            ttk.Label(hdr, text=col_txt, style="Panel.TLabel", width=col_w,
+                      anchor="center", font=("Consolas", 9, "bold")).pack(side="left", padx=2)
+
+        # Register rows: (addr, label)
+        self._regmap_rows = [
+            (REG_CTRL,      "CTRL"),
+            (REG_TWD_MS,    "tWD_ms"),
+            (REG_TRST_MS,   "tRST_ms"),
+            (REG_ARM_DELAY, "ARM_DLY"),
+            (REG_STATUS,    "STATUS"),
+        ]
+        self._regmap_dec_vars = []
+        self._regmap_hex_vars = []
+        for addr, name in self._regmap_rows:
+            row = tk.Frame(regmap_panel, bg=PANEL_BG)
+            row.pack(fill="x", pady=1)
+            ttk.Label(row, text=f"0x{addr:02X}", style="Panel.TLabel",
+                      width=5, anchor="center", font=("Consolas", 9)).pack(side="left", padx=2)
+            ttk.Label(row, text=name, style="Panel.TLabel",
+                      width=14, anchor="w", font=("Consolas", 9)).pack(side="left", padx=2)
+            dv = tk.StringVar(value="---")
+            hv = tk.StringVar(value="---")
+            self._regmap_dec_vars.append(dv)
+            self._regmap_hex_vars.append(hv)
+            tk.Label(row, textvariable=dv, bg="#0f172a", fg=ACCENT_GREEN,
+                     font=("Consolas", 9), width=10, anchor="e", relief="flat").pack(side="left", padx=2)
+            tk.Label(row, textvariable=hv, bg="#0f172a", fg="#94a3b8",
+                     font=("Consolas", 9), width=10, anchor="e", relief="flat").pack(side="left", padx=2)
+
+        ttk.Button(regmap_panel, text="⟳ Refresh All Registers",
+                   command=self._refresh_reg_map).pack(fill="x", pady=(8, 0))
+
         kick_panel = self._create_panel(col2, "HEARTBEAT (AUTO-KICK)")
         kf = tk.Frame(kick_panel, bg=PANEL_BG)
         kf.pack(fill="x", pady=5)
@@ -286,7 +352,7 @@ class WatchdogGUI:
         ttk.Button(cons_tools, text="Clear", command=self._clear_log).pack(side="right")
 
         self.log_box = scrolledtext.ScrolledText(cons_panel, bg="#020617", fg="#10b981",
-                                                 font=("Consolas", 9), relief="flat", state="disabled")
+                                                 font=("Consolas", 15), relief="flat", state="disabled")
         self.log_box.pack(fill="both", expand=True)
         self.log_box.tag_config("TX", foreground="#3b82f6")
         self.log_box.tag_config("RX", foreground="#d946ef")
@@ -392,7 +458,11 @@ class WatchdogGUI:
         """Feed poll commands at 10 Hz via Tk's event loop — zero extra threads."""
         if not self.polling or not self._check_conn():
             return
-        self._cmd_queue.put(("poll",))
+            
+        if not self._poll_pending:
+            self._poll_pending = True
+            self._cmd_queue.put(("poll",))
+            
         self.root.after(100, self._schedule_poll)
 
     def _update_status_display(self, val):
@@ -443,7 +513,11 @@ class WatchdogGUI:
     def _schedule_kick(self):
         if not self.kick_running or not self._check_conn():
             return
-        self._cmd_queue.put(("kick",))
+            
+        if not self._kick_pending:
+            self._kick_pending = True
+            self._cmd_queue.put(("kick",))
+            
         try:
             interval_ms = max(100, int(float(self.kick_interval.get()) * 1000))
         except:
@@ -462,21 +536,31 @@ class WatchdogGUI:
         except:
             messagebox.showerror("Error", "Invalid config values")
             return
-        self._write_reg(REG_TWD_MS, twd)
-        self._write_reg(REG_TRST_MS, trst)
-        self._write_reg(REG_ARM_DELAY, arm)
+        self._cmd_queue.put(("write_cfg", twd, trst, arm))
 
     def _read_config(self):
         if not self._check_conn(): return
-        def cb_twd(v):
-            if v is not None: self.reg_vars["twd"].set(str(v))
-        def cb_trst(v):
-            if v is not None: self.reg_vars["trst"].set(str(v))
-        def cb_arm(v):
-            if v is not None: self.reg_vars["arm"].set(str(v & 0xFFFF))
-        self._read_reg(REG_TWD_MS, callback=cb_twd)
-        self._read_reg(REG_TRST_MS, callback=cb_trst)
-        self._read_reg(REG_ARM_DELAY, callback=cb_arm)
+        self._cmd_queue.put(("read_cfg",))
+        
+    def _update_cfg_ui(self, twd, trst, arm):
+        if twd is not None: self.reg_vars["twd"].set(str(twd))
+        if trst is not None: self.reg_vars["trst"].set(str(trst))
+        if arm is not None: self.reg_vars["arm"].set(str(arm & 0xFFFF))
+
+    def _refresh_reg_map(self):
+        """Enqueue a full register map read (non-blocking)."""
+        if not self._check_conn(): return
+        self._cmd_queue.put(("read_regmap",))
+
+    def _update_reg_map_ui(self, results):
+        """Update the register map table with fresh values (runs on GUI thread)."""
+        for i, val in enumerate(results):
+            if val is not None:
+                self._regmap_dec_vars[i].set(str(val))
+                self._regmap_hex_vars[i].set(f"0x{val:08X}")
+            else:
+                self._regmap_dec_vars[i].set("Timeout")
+                self._regmap_hex_vars[i].set("---")
 
     # ------------------------------------------------------------------ #
     #  LOG                                                                #
