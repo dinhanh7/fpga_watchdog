@@ -22,6 +22,21 @@ CMD_WRITE, CMD_READ, CMD_KICK, CMD_STATUS = 0x01, 0x02, 0x03, 0x04
 CTRL_EN_SW, CTRL_WDI_SRC, CTRL_CLR_FLT = (1<<0), (1<<1), (1<<2)
 ST_EN_EFF, ST_FAULT, ST_ENOUT, ST_WDO, ST_KICK_SRC = (1<<0), (1<<1), (1<<2), (1<<3), (1<<4)
 
+CMD_OPTIONS = [
+    ("0x01 (WRITE)", CMD_WRITE),
+    ("0x02 (READ)", CMD_READ),
+    ("0x03 (KICK)", CMD_KICK),
+    ("0x04 (STATUS)", CMD_STATUS),
+]
+
+ADDR_OPTIONS = [
+    ("0x00 (CTRL)", REG_CTRL),
+    ("0x04 (tWD)", REG_TWD_MS),
+    ("0x08 (tRST)", REG_TRST_MS),
+    ("0x0C (armDelay)", REG_ARM_DELAY),
+    ("0x10 (STATUS)", REG_STATUS),
+]
+
 # === UART Protocol Helpers ===
 def build_frame(cmd, addr, data_bytes=[]):
     core = [cmd, addr, len(data_bytes)] + data_bytes
@@ -91,20 +106,6 @@ class WatchdogGUI:
                 result = self._do_send(cmd, addr, data_bytes, expect_data)
                 if callback:
                     self.root.after(0, callback, result)
-            elif kind == "write_cfg":
-                twd, trst, arm = item[1:]
-                self._do_send(CMD_WRITE, REG_TWD_MS, list(struct.pack(">I", twd)), False)
-                time.sleep(0.05)
-                self._do_send(CMD_WRITE, REG_TRST_MS, list(struct.pack(">I", trst)), False)
-                time.sleep(0.05)
-                self._do_send(CMD_WRITE, REG_ARM_DELAY, list(struct.pack(">I", arm)), False)
-            elif kind == "read_cfg":
-                v1 = self._do_send(CMD_READ, REG_TWD_MS, [], True)
-                time.sleep(0.05)
-                v2 = self._do_send(CMD_READ, REG_TRST_MS, [], True)
-                time.sleep(0.05)
-                v3 = self._do_send(CMD_READ, REG_ARM_DELAY, [], True)
-                self.root.after(0, self._update_cfg_ui, v1, v2, v3)
             elif kind == "read_regmap":
                 results = []
                 for addr, _ in self._regmap_rows:
@@ -279,20 +280,61 @@ class WatchdogGUI:
         ttk.Button(btn_frame, text="Clear Fault", command=self._clear_fault, style="Danger.TButton").pack(fill="x", pady=3)
         ttk.Button(btn_frame, text="Disable WDG", command=self._disable_wdg).pack(fill="x", pady=3)
 
-        # === COLUMN 2: Registers & Auto-Kick ===
-        reg_panel = self._create_panel(col2, "REGISTER CONFIG")
-        self.reg_vars = {}
-        regs = [("tWD Timeout (ms)", "twd", "1600"),
-                ("tRST Delay (ms)", "trst", "200"),
-                ("Arming Delay (µs)", "arm", "150")]
-        for txt, key, default in regs:
-            f = tk.Frame(reg_panel, bg=PANEL_BG)
-            f.pack(fill="x", pady=5)
-            ttk.Label(f, text=txt, style="Panel.TLabel", width=16).pack(side="left")
-            v = tk.StringVar(value=default); self.reg_vars[key] = v
-            tk.Entry(f, textvariable=v, bg="#334155", fg="white", insertbackground="white", relief="flat").pack(side="right", fill="x", expand=True)
-        ttk.Button(reg_panel, text="Write All", command=self._write_config).pack(fill="x", pady=(10,3))
-        ttk.Button(reg_panel, text="Read All", command=self._read_config).pack(fill="x", pady=3)
+        # === COLUMN 2: UART Config Builder ===
+        reg_panel = self._create_panel(col2, "UART 9600 8N1 BUILDER")
+
+        top_row = tk.Frame(reg_panel, bg=PANEL_BG)
+        top_row.pack(fill="x", pady=(2, 8))
+
+        cmd_col = tk.Frame(top_row, bg=PANEL_BG)
+        cmd_col.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Label(cmd_col, text="CMD (HEX)", style="Panel.TLabel").pack(anchor="w", pady=(0, 3))
+        self.uart_cmd_var = tk.StringVar(value=CMD_OPTIONS[0][0])
+        self.uart_cmd_cb = ttk.Combobox(
+            cmd_col,
+            textvariable=self.uart_cmd_var,
+            state="readonly",
+            values=[label for label, _ in CMD_OPTIONS],
+            width=16,
+        )
+        self.uart_cmd_cb.pack(fill="x")
+        self.uart_cmd_cb.bind("<<ComboboxSelected>>", lambda _: self._on_uart_cmd_changed())
+
+        addr_col = tk.Frame(top_row, bg=PANEL_BG)
+        addr_col.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        ttk.Label(addr_col, text="ADDR (HEX)", style="Panel.TLabel").pack(anchor="w", pady=(0, 3))
+        self.uart_addr_var = tk.StringVar(value=ADDR_OPTIONS[1][0])
+        self.uart_addr_cb = ttk.Combobox(
+            addr_col,
+            textvariable=self.uart_addr_var,
+            state="readonly",
+            values=[label for label, _ in ADDR_OPTIONS],
+            width=18,
+        )
+        self.uart_addr_cb.pack(fill="x")
+
+        data_row = tk.Frame(reg_panel, bg=PANEL_BG)
+        data_row.pack(fill="x", pady=(4, 8))
+        ttk.Label(data_row, text="DATA (DEC)", style="Panel.TLabel").pack(anchor="w", pady=(0, 3))
+        self.uart_data_var = tk.StringVar(value="500")
+        self.uart_data_entry = tk.Entry(
+            data_row,
+            textvariable=self.uart_data_var,
+            bg="#334155",
+            fg="white",
+            insertbackground="white",
+            relief="flat",
+        )
+        self.uart_data_entry.pack(fill="x")
+
+        action_row = tk.Frame(reg_panel, bg=PANEL_BG)
+        action_row.pack(fill="x", pady=(8, 4))
+        ttk.Button(action_row, text="Send Frame", command=self._send_uart_config_frame).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(action_row, text="CLR_FAULT", command=self._clear_fault, style="Danger.TButton").pack(side="left", padx=(6, 0))
+
+        ttk.Label(reg_panel, text="Format: [0x55] [CMD] [ADDR] [LEN] [DATA...] [CHK]", style="Panel.TLabel").pack(anchor="w", pady=(4, 0))
+
+        self._on_uart_cmd_changed()
 
         # === COLUMN 2: Register Map Viewer ===
         regmap_panel = self._create_panel(col2, "REGISTER MAP VIEWER")
@@ -442,6 +484,74 @@ class WatchdogGUI:
         if not self._check_conn(): return
         self._cmd_queue.put(("kick",))
 
+    def _parse_uart_data_value(self):
+        raw = self.uart_data_var.get().strip()
+        if not raw:
+            return 0
+        try:
+            return int(raw, 16) if raw.lower().startswith("0x") else int(raw)
+        except ValueError:
+            raise ValueError("DATA must be an integer (dec) or 0xHEX")
+
+    def _on_uart_cmd_changed(self):
+        cmd = self._get_uart_cmd_code()
+        needs_data = cmd == CMD_WRITE
+        state = "normal" if needs_data else "disabled"
+        self.uart_data_entry.config(state=state)
+
+    def _get_uart_cmd_code(self):
+        selected = self.uart_cmd_var.get()
+        for label, code in CMD_OPTIONS:
+            if label == selected:
+                return code
+        return CMD_WRITE
+
+    def _get_uart_addr_code(self):
+        selected = self.uart_addr_var.get()
+        for label, code in ADDR_OPTIONS:
+            if label == selected:
+                return code
+        return REG_TWD_MS
+
+    def _send_uart_config_frame(self):
+        if not self._check_conn():
+            return
+
+        cmd = self._get_uart_cmd_code()
+        addr = self._get_uart_addr_code()
+
+        if cmd in (CMD_KICK, CMD_STATUS):
+            addr = 0x00
+
+        expect_data = cmd in (CMD_READ, CMD_STATUS)
+        data_bytes = []
+
+        if cmd == CMD_WRITE:
+            try:
+                value = self._parse_uart_data_value()
+            except ValueError as e:
+                messagebox.showerror("Error", str(e))
+                return
+            if value < 0 or value > 0xFFFFFFFF:
+                messagebox.showerror("Error", "DATA out of range (0..4294967295)")
+                return
+            data_bytes = list(struct.pack(">I", value))
+
+        def cb(result):
+            if result is None:
+                return
+            if expect_data and isinstance(result, int):
+                self.uart_data_var.set(str(result))
+                self._log(f"Read value: {result} (0x{result:08X})", "SYS")
+            elif cmd == CMD_WRITE:
+                self._log("WRITE command sent.", "SYS")
+            elif cmd == CMD_KICK:
+                self._log("KICK command sent.", "SYS")
+            elif cmd == CMD_STATUS:
+                self._log("STATUS command sent.", "SYS")
+
+        self._send_cmd_async(cmd, addr, data_bytes=data_bytes, expect_data=expect_data, callback=cb)
+
     # ------------------------------------------------------------------ #
     #  POLLING — uses a timer-based feeder, not a busy-loop thread        #
     # ------------------------------------------------------------------ #
@@ -523,29 +633,6 @@ class WatchdogGUI:
         except:
             interval_ms = 1000
         self.root.after(interval_ms, self._schedule_kick)
-
-    # ------------------------------------------------------------------ #
-    #  CONFIG — enqueue sequential writes/reads                           #
-    # ------------------------------------------------------------------ #
-    def _write_config(self):
-        if not self._check_conn(): return
-        try:
-            twd = int(self.reg_vars["twd"].get())
-            trst = int(self.reg_vars["trst"].get())
-            arm = int(self.reg_vars["arm"].get())
-        except:
-            messagebox.showerror("Error", "Invalid config values")
-            return
-        self._cmd_queue.put(("write_cfg", twd, trst, arm))
-
-    def _read_config(self):
-        if not self._check_conn(): return
-        self._cmd_queue.put(("read_cfg",))
-        
-    def _update_cfg_ui(self, twd, trst, arm):
-        if twd is not None: self.reg_vars["twd"].set(str(twd))
-        if trst is not None: self.reg_vars["trst"].set(str(trst))
-        if arm is not None: self.reg_vars["arm"].set(str(arm & 0xFFFF))
 
     def _refresh_reg_map(self):
         """Enqueue a full register map read (non-blocking)."""
