@@ -69,7 +69,7 @@ module top_watchdog (
 
     // Debouncer for S2 (Hardware Enable)
     wire en_hw_debounced;
-    wire en_hw_falling; // Unused, but wired for completeness
+    wire en_hw_falling; // Used for toggle logic
 
     sync_debounce #(
         .DELAY_CYCLES(20'd540_000)  // ~20ms at 27MHz
@@ -81,9 +81,14 @@ module top_watchdog (
         .falling_edge (en_hw_falling)
     );
 
-    // S2 is active-low (pressed = 0). We invert it to active-high internal logic:
-    // When S2 pressed (en_hw_debounced=0) -> en_hw=1 (Watchdog enabled)
-    wire en_hw = ~en_hw_debounced;
+    // S2 Toggle: Each press toggles en_hw ON/OFF (no need to hold the button)
+    reg en_hw = 1'b0;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            en_hw <= 1'b0;
+        else if (en_hw_falling)
+            en_hw <= ~en_hw;
+    end
 
     // =========================================================
     // BLOCK 3: UART RX
