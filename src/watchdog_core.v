@@ -19,7 +19,7 @@
 // =============================================================================
 
 module watchdog_core #(
-    parameter CLK_FREQ = 50_000_000  // System clock frequency (Hz)
+    parameter CLK_FREQ = 27_000_000  // System clock frequency (Hz)
 )(
     input  wire        clk,
     input  wire        rst_n,

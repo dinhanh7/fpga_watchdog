@@ -90,7 +90,7 @@ module tb_top_watchdog;
             end
             
             uart_send_byte(chk);
-            #(BIT_PERIOD_NS * 5); // Wait some extra time
+            #(BIT_PERIOD_NS * 60); // Wait for ACK transmission to finish
         end
     endtask
 
@@ -112,7 +112,7 @@ module tb_top_watchdog;
                 uart_send_byte(data[7:0]);
             end
             uart_send_byte(chk);
-            #(BIT_PERIOD_NS * 5);
+            #(BIT_PERIOD_NS * 60); // Wait for ACK transmission to finish
         end
     endtask
 
@@ -195,6 +195,9 @@ module tb_top_watchdog;
         wdi_pin = 1;
         #(DEBOUNCE_TIME_NS);
         $display("[%0t] Hardware Kick performed.", $time);
+        
+        $display("\n[%0t] PAUSED: Inspect Test 1 waveforms. Click 'Run' to continue.", $time);
+        $stop;
 
         // ---------------------------------------------------------
         // TEST 2: HW TIMEOUT FAULT
@@ -227,6 +230,9 @@ module tb_top_watchdog;
         en_hw_pin = 1;
         #(DEBOUNCE_TIME_NS);
         $display("[%0t] Hardware Enable Disabled. Watchdog should be in DISABLE state.", $time);
+        
+        $display("\n[%0t] PAUSED: Inspect Test 2 waveforms. Click 'Run' to continue.", $time);
+        $stop;
 
         // ---------------------------------------------------------
         // TEST 4: SW ENABLE & SW KICK
@@ -283,6 +289,9 @@ module tb_top_watchdog;
         end else begin
             $display("[%0t] Watchdog correctly recovered via Clear Fault command.", $time);
         end
+        
+        $display("\n[%0t] PAUSED: Inspect Test 4 & 5 waveforms. Click 'Run' to continue.", $time);
+        $stop;
 
         // ---------------------------------------------------------
         // TEST 6: UART CORNER CASES
@@ -323,20 +332,16 @@ module tb_top_watchdog;
         #(10_000_000); // 10ms
         wdi_pin = 1;
         
-        // This kick should be ignored, so after 10ms (tWD) from previous state, we should fault.
-        // Previous state arm delay finished at 1.5ms. So fault should happen ~10ms from arm delay.
-        #(5_000_000); // Wait 5ms more
+        // This kick should be ignored, the timer is running DURING the pulse.
+        // It started 0.5ms before the pulse. After the 10ms pulse, 10.5ms have passed.
+        // tWD is 10ms, so it should ALREADY be in FAULT state (for 5ms tRST).
+        // Let's wait just 1ms to be well within the 5ms tRST window.
+        #(1_000_000); 
         
         if (wdo_pin === 0) begin
             $display("[%0t] Watchdog correctly faulted, meaning the noisy kick was ignored.", $time);
         end else begin
-            // Wait a little more just in case
-            #(5_000_000);
-            if (wdo_pin === 0) begin
-                 $display("[%0t] Watchdog correctly faulted, meaning the noisy kick was ignored.", $time);
-            end else begin
-                 $fatal(1, "[%0t] Test 7 Failed: Noisy pulse triggered a kick.", $time);
-            end
+            $fatal(1, "[%0t] Test 7 Failed: Noisy pulse triggered a kick.", $time);
         end
 
         // ---------------------------------------------------------
@@ -345,6 +350,8 @@ module tb_top_watchdog;
         $display("\n==================================================");
         $display("   ALL TESTS PASSED SUCESSFULLY!");
         $display("==================================================");
+        $display("\n[%0t] PAUSED: Inspect Test 6 & 7 waveforms. Click 'Run' to exit.", $time);
+        $stop;
         $finish;
     end
 
