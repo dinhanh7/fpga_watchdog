@@ -281,7 +281,7 @@ class WatchdogGUI:
         ttk.Button(btn_frame, text="Disable WDG", command=self._disable_wdg).pack(fill="x", pady=3)
 
         # === COLUMN 2: UART Config Builder ===
-        reg_panel = self._create_panel(col2, "UART 9600 8N1 BUILDER")
+        reg_panel = self._create_panel(col2, "UART CONFIG")
 
         top_row = tk.Frame(reg_panel, bg=PANEL_BG)
         top_row.pack(fill="x", pady=(2, 8))
