@@ -79,9 +79,9 @@ This system monitors a downstream processor or subsystem. If the monitored syste
             │       │       │                    │      │   │             │
             ▼       ▼       │          ┌─────┴────┐     │   │             │
           ┌───────────┐     │          │          │     │   │             │
-          │  regfile  │◄────┤          │ watchdog │◄────┘   │             │
-          │           │     │          │  _core   │◄────────┘             │
-          │  config   │   status       │          │                       │
+          │           │◄────┤          │ watchdog │◄────┘   │             │
+          │  regfile  │     │          │  _core   │◄────────┘             │
+          │           │   status       │          │                       │
           └───┬───────┘     │          │          │                       │
               └─────────────┼─────────►│          │                       │
                             │          └────┬─────┘                       │
