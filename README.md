@@ -369,17 +369,7 @@ A **real-time desktop control panel** built with Python Tkinter for interacting 
 
 The GUI uses a **thread-safe single-worker queue** architecture to prevent UART bus contention:
 
-```
-┌──────────────────────┐           ┌────────────────────────┐
-│   Tkinter GUI Thread │           │   Serial Worker Thread │
-│                      │  queue    │                        │
-│  Button clicks ──────┼──────────►│  _serial_worker()      │
-│  Polling timer ──────┼──────────►│    ├─ _do_send()        │
-│  Auto-kick timer ────┼──────────►│    ├─ _do_poll()        │
-│                      │           │    └─ _do_kick()        │
-│  _update_*() ◄───────┼───────────┤  root.after(0, cb)     │
-└──────────────────────┘           └────────────────────────┘
-```
+![GUI Architecture](image/architecture_gui.png)
 
 - **All serial I/O** is routed through a single `queue.Queue` → processed by one background thread.
 - **Token-based scheduling**: `_poll_pending` and `_kick_pending` flags prevent command queue congestion — a new poll/kick is only enqueued after the previous one completes.
