@@ -23,6 +23,7 @@
   - [watchdog_core](#7-watchdog_corev--fsm--timers)
 - [Testbenches](#testbenches)
 - [Hardware Test Tool](#hardware-test-tool)
+- [Watchdog GUI](#watchdog-gui)
 - [Build & Deploy](#build--deploy)
 
 ---
@@ -55,43 +56,7 @@ This system monitors a downstream processor or subsystem. If the monitored syste
 
 ## Architecture
 
-```text
-                        ┌─────────────────────────────────────────────────┐
-                        │              top_watchdog                       │
-                        │                                                 │
-              ┌─────────────┐                                             │
-  S1 (WDI) ──►│sync_debounce├──► wdi_falling ───────────────┐             │
-              └─────────────┘                               │             │
-              ┌─────────────┐                               │             │
-  S2 (EN)  ──►│sync_debounce├──► en_hw ─────────────────┐   │             │
-              └─────────────┘                           │   │             │
-                        │                               │   │             │
-              ┌─────────────┐                           │   │             │
-  UART RX  ──►│   uart_rx   ├──► rx_data/rx_done        │   │             │
-              └──────┬──────┘                           │   │             │
-                     │                                  │   │             │
-                     ▼                                  │   │             │
-          ┌───────────────────┐                         │   │             │
-          │ uart_frame_parser │◄──── wdi_src ────┐      │   │             │
-          └─┬───────┬───────┬─┘                  │      │   │             │
-            │       │       │                    │      │   │             │
-         reg_we  reg_re  kick_pulse              │      │   │             │
-            │       │       │                    │      │   │             │
-            ▼       ▼       │          ┌─────┴────┐     │   │             │
-          ┌───────────┐     │          │          │     │   │             │
-          │           │◄────┤          │ watchdog │◄────┘   │             │
-          │  regfile  │     │          │  _core   │◄────────┘             │
-          │           │   status       │          │                       │
-          └───┬───────┘     │          │          │                       │
-              └─────────────┼─────────►│          │                       │
-                            │          └────┬─────┘                       │
-          ┌───────────┐     │               │                             │
-          │  uart_tx  │◄────┘               ├──► WDO LED (Pin 27)         │
-          └─────┬─────┘                     └──► ENOUT LED (Pin 28)       │
-                │                                                         │
-  UART TX ◄─────┘                                                         │
-                        └─────────────────────────────────────────────────┘
-```
+![Architecture](image/architecture.png)
 
 ---
 
@@ -180,34 +145,7 @@ Frames with incorrect checksums are **silently ignored**. No error response is s
 
 ## FSM State Machine
 
-```
-                    EN=0 (from any state)
-          ┌───────────────────────────────────┐
-          ▼                                   │
-    ┌──────────┐     EN=1      ┌─────────┐    │
-    │ DISABLE  │──────────────►│ ARMING  │    │
-    │ WDO=1    │               │ WDO=1   │    │
-    │ ENOUT=0  │               │ ENOUT=0 │    │
-    └──────────┘               └────┬────┘    │
-                                    │ arm_delay expires
-                                    ▼
-                              ┌──────────┐
-                       ┌─────►│ MONITOR  │◄────────┐
-                       │      │ WDO=1    │         │
-                       │      │ ENOUT=1  │         │
-                       │      └────┬─────┘         │
-                       │           │ tWD expires   │ tRST expires
-                       │           │ (no kick)     │ or CLR_FAULT
-                       │           ▼               │
-                       │      ┌──────────┐         │
-                       │      │  FAULT   │─────────┘
-                       │      │ WDO=0    │
-                       │      │ ENOUT=1  │
-                       │      └──────────┘
-                       │           │
-                       │  kick_valid (resets timer)
-                       └───────────┘
-```
+![FSM State Machine](image/FSM_wachdog_core.png)
 
 | State | WDO | ENOUT | Timer | Kick Behavior |
 |---|---|---|---|---|
@@ -415,6 +353,100 @@ Comprehensive automated integration testbench for the entire system:
 
 ---
 
+## Watchdog GUI
+
+### `watchdog_gui.py`
+
+A **real-time desktop control panel** built with Python Tkinter for interacting with the FPGA Watchdog system over UART. Provides live status monitoring, register configuration, and heartbeat management — all from a modern dark-themed GUI.
+
+**Requirements**: `pip install pyserial`
+
+**Run**: `py watchdog_gui.py`
+
+### Architecture
+
+The GUI uses a **thread-safe single-worker queue** architecture to prevent UART bus contention:
+
+```
+┌──────────────────────┐           ┌────────────────────────┐
+│   Tkinter GUI Thread │           │   Serial Worker Thread │
+│                      │  queue    │                        │
+│  Button clicks ──────┼──────────►│  _serial_worker()      │
+│  Polling timer ──────┼──────────►│    ├─ _do_send()        │
+│  Auto-kick timer ────┼──────────►│    ├─ _do_poll()        │
+│                      │           │    └─ _do_kick()        │
+│  _update_*() ◄───────┼───────────┤  root.after(0, cb)     │
+└──────────────────────┘           └────────────────────────┘
+```
+
+- **All serial I/O** is routed through a single `queue.Queue` → processed by one background thread.
+- **Token-based scheduling**: `_poll_pending` and `_kick_pending` flags prevent command queue congestion — a new poll/kick is only enqueued after the previous one completes.
+- **GUI callbacks** use `root.after(0, callback)` to safely update UI from the worker thread.
+
+### UI Layout (3 Columns)
+
+#### Column 1 — Live Status & Hardware Controls
+
+| Widget | Description |
+|---|---|
+| **CORE STATE** | Inferred FSM state (DISABLE / ARMING / MONITOR / FAULT) with color coding |
+| **Status Flags** | EN_EFF, FAULT, ENOUT, WDO, KICK_SRC — live values from STATUS register |
+| **LED Indicators** | Virtual LEDs for WDO (red when fault) and ENOUT (green when active) |
+| **System Enable (SW)** | Checkbox to toggle `CTRL[0]` (en_sw) |
+| **Kick Source: UART** | Checkbox to toggle `CTRL[1]` (wdi_src) |
+| **Apply CTRL** | Writes the current checkbox state to the CTRL register |
+| **Clear Fault** | Sends `CTRL[2]=1` (W1C) to immediately clear fault |
+| **Disable WDG** | Writes `CTRL=0x00000000` to fully disable the watchdog |
+
+#### Column 2 — UART Config & Register Map
+
+| Widget | Description |
+|---|---|
+| **CMD Combobox** | Select command: WRITE (0x01), READ (0x02), KICK (0x03), STATUS (0x04) |
+| **ADDR Combobox** | Select register address: CTRL, tWD, tRST, armDelay, STATUS |
+| **DATA Entry** | Decimal or hex (`0x...`) value for WRITE commands |
+| **Send Frame** | Build and send a complete UART frame with auto-checksum |
+| **Register Map Viewer** | Table showing all 5 registers with decimal and hex values |
+| **⟳ Refresh All** | Reads all registers sequentially (non-blocking) |
+| **Auto-Kick** | Configurable interval heartbeat sender with enable checkbox |
+| **Manual Kick** | One-shot kick command |
+
+#### Column 3 — System Console
+
+| Widget | Description |
+|---|---|
+| **Log Window** | Scrollable console showing all TX/RX frames, errors, and system events |
+| **Color Tags** | TX=blue, RX=purple, ERR=red, SYS=gray |
+| **Start/Stop Polling** | Toggle 10 Hz STATUS polling (non-blocking) |
+| **Clear** | Clear the console log |
+
+### Key Features
+
+| Feature | Implementation |
+|---|---|
+| **COM Port Selection** | Auto-detects available ports, default COM5 |
+| **Live Polling** | 10 Hz `GET_STATUS` polling via `Tk.after()` timer — zero extra threads |
+| **Auto-Kick** | Timer-based kick scheduler with configurable interval (min 100ms) |
+| **Non-blocking I/O** | All UART transactions are queued and executed asynchronously |
+| **FSM State Inference** | Derives FSM state from STATUS register bits (EN_EFF, ENOUT, FAULT) |
+| **Register Map Viewer** | Bulk-reads all 5 registers with 40ms spacing between transactions |
+| **Data Entry Validation** | Supports decimal and `0x` hex input, range-checked 0..0xFFFFFFFF |
+| **Clean Disconnect** | Drains command queue before closing port to prevent worker thread errors |
+
+### UART Protocol (GUI ↔ FPGA)
+
+The GUI uses the same binary protocol as `watchdog_hw_tester.py`:
+
+```
+[0x55] [CMD] [ADDR] [LEN] [DATA...] [CHK]
+```
+
+Helper functions:
+- `build_frame(cmd, addr, data_bytes)` — Constructs a frame with auto-XOR checksum
+- `recv_frame(ser, timeout)` — Reads and validates a response frame from FPGA
+
+---
+
 ## Hardware Test Tool
 
 ### `watchdog_hw_tester.py`
@@ -474,7 +506,8 @@ watchdog_project/
 │   ├── tb_watchdog_core.v      # Core FSM testbench
 │   └── tb_top_watchdog.v       # Full system integration testbench
 ├── impl/                       # Gowin synthesis output
-├── watchdog_hw_tester.py       # Python UART test suite
+├── watchdog_gui.py             # Real-time GUI control panel (Tkinter)
+├── watchdog_hw_tester.py       # Python UART test suite (CLI)
 └── watchdog_project.gprj       # Gowin project file
 ```
 

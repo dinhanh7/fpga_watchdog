@@ -45,8 +45,8 @@ module sync_debounce #(
             cnt      <= 20'd0;
             button_o <= 1'b1; // Default unpressed
         end else begin
-            if (sync2 == button_o) begin
-                // If synchronized input matches current output, reset counter
+            if (sync2 == button_o) begin  
+                // If synchronized input matches current output, reset counter              
                 cnt <= 20'd0;
             end else begin
                 // If there's a difference (button being pressed/released), increment
