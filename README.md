@@ -359,6 +359,8 @@ Comprehensive automated integration testbench for the entire system:
 
 A **real-time desktop control panel** built with Python Tkinter for interacting with the FPGA Watchdog system over UART. Provides live status monitoring, register configuration, and heartbeat management — all from a modern dark-themed GUI.
 
+![Watchdog GUI](image/watchdog_gui.png)
+
 **Requirements**: `pip install pyserial`
 
 **Run**: `py watchdog_gui.py`

@@ -65,7 +65,7 @@ def recv_frame(ser, timeout=0.2):
 class WatchdogGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Watchdog Monitor Pro")
+        self.root.title("Watchdog Monitor")
         self.root.geometry("1100x750")
         self.root.configure(bg=BG_COLOR)
 
@@ -222,7 +222,7 @@ class WatchdogGUI:
         # Top Bar
         top_bar = tk.Frame(self.root, bg=BG_COLOR)
         top_bar.pack(fill="x", padx=15, pady=(15, 5))
-        ttk.Label(top_bar, text="Watchdog Monitor Pro", style="H1.TLabel").pack(side="left")
+        ttk.Label(top_bar, text="Watchdog Monitor", style="H1.TLabel").pack(side="left")
 
         conn_frame = tk.Frame(top_bar, bg=BG_COLOR)
         conn_frame.pack(side="right")
