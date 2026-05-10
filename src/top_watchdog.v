@@ -113,6 +113,7 @@ module top_watchdog (
     wire [7:0] tx_data;
     wire       tx_en;
     wire       tx_busy;
+    wire       tx_done;
 
     uart_tx #(
         .CLK_FREQ(27_000_000), 
@@ -123,7 +124,8 @@ module top_watchdog (
         .data_i     (tx_data),
         .tx_start_i (tx_en),
         .uart_tx_o  (uart_tx_pin),
-        .tx_busy_o  (tx_busy)
+        .tx_busy_o  (tx_busy),
+        .tx_done_o  (tx_done)
     );
 
     // =========================================================
@@ -152,6 +154,7 @@ module top_watchdog (
         .tx_data_o         (tx_data),
         .tx_en_o           (tx_en),
         .tx_busy_i         (tx_busy),
+        .tx_done_i         (tx_done),
         .reg_addr_o        (reg_addr),
         .reg_we_o          (reg_we),
         .reg_re_o          (reg_re),

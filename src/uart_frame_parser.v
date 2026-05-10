@@ -25,6 +25,7 @@ module uart_frame_parser (
     output reg  [7:0]  tx_data_o,
     output reg         tx_en_o,
     input  wire        tx_busy_i,
+    input  wire        tx_done_i,      // 1-cycle pulse when byte transmission completes
 
     // =========================================================
     // REGFILE INTERFACE
@@ -69,10 +70,6 @@ module uart_frame_parser (
     reg [3:0] tx_idx;        // Index of the byte currently being transmitted
     reg [3:0] tx_len_total;  // Total number of bytes in the response frame
 
-    // Edge detector for tx_busy to know when a byte transmission finishes
-    reg tx_busy_d1;
-    wire tx_busy_falling = (tx_busy_d1 == 1'b1 && tx_busy_i == 1'b0);
-
     // =========================================================
     // PARSER FSM LOGIC
     // =========================================================
@@ -85,12 +82,9 @@ module uart_frame_parser (
             reg_wdata_o       <= 32'd0;
             uart_kick_pulse_o <= 1'b0;
             tx_en_o           <= 1'b0;
-            tx_busy_d1        <= 1'b0;
             calc_chk          <= 8'd0;
             byte_cnt          <= 3'd0;
         end else begin
-            tx_busy_d1        <= tx_busy_i;
-            
             // Ensure pulses are only 1 clock cycle wide
             uart_kick_pulse_o <= 1'b0; 
             reg_we_o          <= 1'b0;
@@ -214,28 +208,27 @@ module uart_frame_parser (
                 end
 
                 S_TX_SEND: begin
-                    // When the transmission of a byte finishes, increment index
-                    if (tx_busy_falling) begin
+                    // When TX finishes a byte, increment index and prepare next
+                    if (tx_done_i) begin
                         if (tx_idx == tx_len_total - 1'b1) begin
-                            state <= S_WAIT_55; // Finished transmitting -> Wait for new frame
+                            state <= S_WAIT_55; // Finished transmitting all bytes
                         end else begin
                             tx_idx <= tx_idx + 4'd1;
                         end
-                    end 
-                    // Feed new data if TX module is completely idle
-                    else if (!tx_busy_i && !tx_en_o && !tx_busy_d1) begin
-                        // If we're at the final byte (CHK)
+                    end else if (!tx_busy_i && !tx_en_o) begin
+                        // Load and send data when TX module is idle and we haven't enabled it yet this cycle
+                        // Prepare byte to transmit
                         if (tx_idx == tx_len_total - 1'b1) begin
-                            if (tx_len_total == 4'd9) begin // Data read ACK
-                                tx_data_o <= tx_buf[1] ^ tx_buf[2] ^ tx_buf[3] ^ 
+                            // This is the checksum byte
+                            if (tx_len_total == 4'd9) begin
+                                tx_data_o <= tx_buf[0] ^ tx_buf[1] ^ tx_buf[2] ^ tx_buf[3] ^ 
                                              tx_buf[4] ^ tx_buf[5] ^ tx_buf[6] ^ tx_buf[7];
-                            end else begin // Empty ACK
-                                tx_data_o <= tx_buf[1] ^ tx_buf[2] ^ tx_buf[3];
+                            end else begin
+                                tx_data_o <= tx_buf[0] ^ tx_buf[1] ^ tx_buf[2] ^ tx_buf[3];
                             end
                         end else begin
                             tx_data_o <= tx_buf[tx_idx];
                         end
-
                         tx_en_o <= 1'b1; // Pulse TX enable
                     end
                 end
